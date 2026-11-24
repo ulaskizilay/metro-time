@@ -1,42 +1,25 @@
 # Metro-Time
 
-Metro İstanbul sefer saatleri terminalde. Hattını, durağını ve yönünü seç,
-sonraki seferleri istasyondaki tabelaya benzeyen bir ekranda gör. Liste her
-30 saniyede bir kendini yeniler.
+Metro İstanbul sefer saatlerini doğrudan terminalde gösteren TUI (Terminal UI) uygulaması. Hattını, durağını ve yönünü seç; sonraki seferleri istasyonlardaki LED tabelaya benzeyen bir ekranda takip et. Liste her 30 saniyede bir otomatik yenilenir.
 
-## Go Kurulumu
+- **Kapsam:** 18 hat ve 248 durak uygulama içine gömülüdür (`internal/data/metro-hatlar.json`); internet yalnızca güncel sefer saatlerini çekmek için kullanılır.
+- **Akış:** Karşılama → Hat Seç → Durak Seç → Yön Seç → Sefer Tabelası
 
-Kaynaktan derlemek için Go 1.24+ gerekir.
+## Ekran Görüntüleri
 
-| İşletim Sistemi | Komut |
-|---|---|
-| Windows | `winget install GoLang.Go` |
-| macOS | `brew install go` |
-| Linux | [go.dev/dl](https://go.dev/dl) adresinden `linux-amd64` arşivini indirip kur |
-
-Linux'ta arşivle kurulum:
-
-```bash
-sudo rm -rf /usr/local/go
-sudo tar -C /usr/local -xzf go1.27.linux-amd64.tar.gz
-```
-
-Kurulumu doğrula: `go version`
-
-## Çalıştırma
-
-Go kuruluysa (1.24+):
-
-```bash
-go run ./cmd/metro-time
-```
-
-Hazır çalıştırılabilir dosya:
-
-```bash
-.\metro-time.exe   # Windows
-./metro-time       # Linux / macOS
-```
+<table>
+  <tr>
+    <td align="center" valign="top"><strong>1. Karşılama</strong><br><img src="screenshots/karsilama-ekrani.png" alt="Karşılama" width="420"></td>
+    <td align="center" valign="top"><strong>2. Hat Seçimi</strong><br><img src="screenshots/hat-sec.png" alt="Hat Seç" width="420"></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top"><strong>3. Durak Seçimi</strong><br><img src="screenshots/durak-sec.png" alt="Durak Seç" width="420"></td>
+    <td align="center" valign="top"><strong>4. Yön Seçimi</strong><br><img src="screenshots/yon-sec.png" alt="Yön Seç" width="420"></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center" valign="top"><strong>5. Sefer Tabelası</strong><br><img src="screenshots/tabela.png" alt="Tabela" width="420"></td>
+  </tr>
+</table>
 
 ## Kullanım
 
@@ -48,31 +31,44 @@ Hazır çalıştırılabilir dosya:
 | R     | Seferleri hemen yenile       |
 | Q     | Çık                          |
 
-Akış: Karşılama → Hat Seç → Durak Seç → Yön Seç → Sonuç.
+## Kurulum ve Çalıştırma
 
-![Karşılama](screenshots/karsilama-ekrani.jpg)
-![Hat Seç](screenshots/hat-sec.jpg)
-![Durak Seç](screenshots/durak-sec.jpg)
-![Yön Seç](screenshots/yon-sec.jpg)
-![Tabela](screenshots/tabela.jpg)
+Kaynaktan derlemek veya çalıştırmak için **Go 1.24+** gerekir.
 
-## Nasıl çalışıyor?
+| İşletim Sistemi | Kurulum Komutu |
+|---|---|
+| Windows | `winget install GoLang.Go` |
+| macOS | `brew install go` |
+| Linux | [go.dev/dl](https://go.dev/dl) adresinden `linux-amd64` arşivini indirip kur |
 
-Metro İstanbul'un herkese açık bir API'si yok. Uygulama, resmi sitenin
-sefer sayfasını açıp oturum bilgisini alır, sonra aynı sitenin veri
-isteğini taklit ederek seferleri çeker. 18 hat ve 248 durak uygulamaya
-gömülüdür (`internal/data/metro-hatlar.json`), internet sadece güncel
-saatleri almak için gerekir.
+Linux'ta arşivle kurulum örneği:
 
-## Veri Kaynağı
+```bash
+sudo rm -rf /usr/local/go
+sudo tar -C /usr/local -xzf go1.24.0.linux-amd64.tar.gz
+```
 
-Sefer verileri Metro İstanbul'un resmi sitesinden (`metro.istanbul`)
-alınır. Bu veriler İBB Açık Veri Portalı'nda "Metro İstanbul Sefer
-Tarifeleri" adıyla, İstanbul Büyükşehir Belediyesi Açık Veri Lisansı
-(CC BY 4.0 ile uyumlu) kapsamında yayınlanır; lisans kaynağın
-belirtilmesini şart koşar. Lisans: `https://data.ibb.gov.tr/license`
+Kurulumu doğruladıktan sonra (`go version`) projeyi çalıştırabilirsin:
 
-## Not
+```bash
+go run ./cmd/metro-time
+```
 
-Bireysel bilgilendirme amaçlı açık kaynak çalışmadır; Metro İstanbul A.Ş.
-ile resmi bağı yoktur. Sefer verileri `metro.istanbul` adresinden alınır.
+Hazır çalıştırılabilir dosya kullanıyorsan:
+
+```bash
+.\metro-time.exe   # Windows
+./metro-time       # Linux / macOS
+```
+
+## Hakkında ve Nasıl Çalışıyor?
+
+Metro İstanbul'un herkese açık bir REST API'si bulunmuyor. Uygulama, resmi sefer sorgulama sayfasını açarak oturum bilgisini ve dinamik doğrulama kodunu alır, ardından sitenin kendi veri isteğini taklit ederek güncel kalkış saatlerini çeker.
+
+### Veri Kaynağı ve Lisans
+
+Sefer verileri Metro İstanbul'un resmi sitesinden (`metro.istanbul`) alınır. Bu veriler İBB Açık Veri Portalı'nda "Metro İstanbul Sefer Tarifeleri" adıyla, İstanbul Büyükşehir Belediyesi Açık Veri Lisansı (CC BY 4.0 ile uyumlu) kapsamında yayınlanır; lisans kaynağın belirtilmesini şart koşar. Lisans: `https://data.ibb.gov.tr/license`
+
+### Sorumluluk Notu
+
+Bu proje bireysel bilgilendirme amaçlı açık kaynak bir çalışmadır; Metro İstanbul A.Ş. ile resmi bir bağı yoktur.
