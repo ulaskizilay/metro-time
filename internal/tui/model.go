@@ -3,15 +3,10 @@ package tui
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 
 	"github.com/ulask/metro-time/internal/metro"
 )
@@ -34,6 +29,11 @@ const (
 	stageResult
 )
 
+// TripFetcher fetches departure trips for a route and station.
+type TripFetcher interface {
+	GetTrips(ctx context.Context, routeID, stationID string) ([]metro.Trip, error)
+}
+
 // listItem must expose Title/Description: that is the interface
 // DefaultDelegate renders, anything else shows up as blank rows.
 type listItem struct {
@@ -55,7 +55,7 @@ type refreshTickMsg time.Time
 
 type Model struct {
 	lines         []metro.Line
-	client        *metro.Client
+	client        TripFetcher
 	totalStations int
 
 	stage             stage
@@ -69,10 +69,19 @@ type Model struct {
 	tripSeq           int
 }
 
+// New creates a TUI model using the default Metro Istanbul client.
 func New(lines []metro.Line) Model {
+	return NewWithFetcher(lines, metro.NewClient())
+}
+
+// NewWithFetcher creates a TUI model using the given TripFetcher.
+func NewWithFetcher(lines []metro.Line, fetcher TripFetcher) Model {
+	if fetcher == nil {
+		fetcher = metro.NewClient()
+	}
 	return Model{
 		lines:         lines,
-		client:        metro.NewClient(),
+		client:        fetcher,
 		totalStations: countStations(lines),
 		stage:         stageWelcome,
 		list:          newList(lineTitle(len(lines)), lineChoices(lines), 0, 0),
@@ -142,7 +151,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c", "q", "Q":
 			return m, tea.Quit
 		case "esc":
 			return m.goBack()
@@ -165,7 +174,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		if msg.err != nil {
 			m.errMsg = "Bağlantı Hatası, Tekrar Deneniyor..."
-			m.trips = nil
 		} else {
 			m.errMsg = ""
 			m.trips = msg.trips
@@ -182,7 +190,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.refreshTrips()
 	}
 
-	if m.stage != stageResult {
+	if m.stage != stageWelcome && m.stage != stageResult {
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
 		return m, cmd
@@ -244,16 +252,17 @@ func (m Model) goBack() (tea.Model, tea.Cmd) {
 	switch m.stage {
 	case stageLine:
 		m.stage = stageWelcome
-		m.setList(lineTitle(len(m.lines)), lineChoices(m.lines))
+		m.showLinesList()
 	case stageStation:
 		m.stage = stageLine
 		m.selectedLine = nil
-		m.setList(lineTitle(len(m.lines)), lineChoices(m.lines))
+		m.showLinesList()
 	case stageDirection:
 		m.stage = stageStation
 		m.setList(stationTitle(m.selectedLine), stationChoices(m.selectedLine))
 	case stageResult:
 		m.stage = stageDirection
+		m.loading = false
 		m.trips = nil
 		m.errMsg = ""
 		m.tripSeq++ // invalidate in-flight answers
@@ -262,6 +271,10 @@ func (m Model) goBack() (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	return m, nil
+}
+
+func (m *Model) showLinesList() {
+	m.setList(lineTitle(len(m.lines)), lineChoices(m.lines))
 }
 
 func (m *Model) setList(title string, choices []listItem) {
@@ -275,6 +288,7 @@ func newList(title string, choices []listItem, windowWidth, windowHeight int) li
 	l.Title = title
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(false)
+	l.SetShowHelp(false)
 	return l
 }
 
@@ -295,136 +309,4 @@ func (m Model) refreshTrips() (tea.Model, tea.Cmd) {
 
 func waitRefresh() tea.Cmd {
 	return tea.Tick(refreshInterval, func(t time.Time) tea.Msg { return refreshTickMsg(t) })
-}
-
-// directionText turns "A-->>B" into "A → B".
-func directionText(direction string) string {
-	return strings.ReplaceAll(direction, "-->>", " → ")
-}
-
-var (
-	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	dimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-
-	welcomeBoxStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("12")).
-			Padding(1, 6).
-			Align(lipgloss.Center)
-
-	ledPanelStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color("0")).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("8")).
-			Padding(1, 2)
-	ledDestStyle = lipgloss.NewStyle().Bold(true).
-			Foreground(lipgloss.Color("10")).
-			Background(lipgloss.Color("0"))
-	ledTimeStyle = lipgloss.NewStyle().Bold(true).
-			Foreground(lipgloss.Color("202")).
-			Background(lipgloss.Color("0"))
-	onboardLedStyle = lipgloss.NewStyle().Bold(true).
-			Foreground(lipgloss.Color("11")).
-			Background(lipgloss.Color("0"))
-)
-
-const (
-	ledDestWidth = 26
-	ledTimeWidth = 8
-)
-
-func (m Model) welcomeView() string {
-	body := titleStyle.Render("Metro-Time") + "\n\n" +
-		"Metro İstanbul Sefer Saatleri Terminalde\n" +
-		dimStyle.Render(fmt.Sprintf("%d Hat • %d Durak", len(m.lines), m.totalStations)) + "\n\n" +
-		"Hat → Durak → Yön Seç, Sonraki Seferleri Gör\n\n" +
-		dimStyle.Render("Enter: Başla • Q: Çık")
-	return "\n" + welcomeBoxStyle.Render(body) + "\n"
-}
-
-func (m Model) View() string {
-	if m.stage == stageWelcome {
-		return m.welcomeView()
-	}
-	if m.stage != stageResult {
-		return "\n" + m.list.View() + "\n" + dimStyle.Render("↑↓: Gez • Enter: Seç • Q: Çık")
-	}
-
-	var b strings.Builder
-	b.WriteString(dimStyle.Render(fmt.Sprintf("%s • %s", m.selectedLine.Code, m.selectedStation.Text)) + "\n")
-	b.WriteString(dimStyle.Render(directionText(m.selectedDirection.Text)) + "\n\n")
-
-	switch {
-	case m.loading && len(m.trips) == 0:
-		b.WriteString("Seferler Yükleniyor...\n")
-	case m.errMsg != "":
-		b.WriteString(m.errMsg + "\n")
-	default:
-		b.WriteString(ledPanelStyle.Render(m.ledRows()) + "\n")
-	}
-
-	b.WriteString("\n" + dimStyle.Render("R: Yenile • Esc: Geri • Q: Çık"))
-	return b.String()
-}
-
-func (m Model) ledRows() string {
-	if len(m.trips) == 0 {
-		return dimStyle.Background(lipgloss.Color("0")).Render("Yaklaşan Sefer Bulunamadı.")
-	}
-	rows := make([]string, 0, len(m.trips))
-	for _, t := range m.trips {
-		remaining, onboard := remainingTime(t.Time)
-		rendered := ledTimeStyle.Render(remaining)
-		if onboard {
-			rendered = onboardLedStyle.Render(remaining)
-		}
-		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top,
-			lipgloss.PlaceHorizontal(ledDestWidth, lipgloss.Left, ledDestStyle.Render(ledText(t.To))),
-			lipgloss.PlaceHorizontal(ledTimeWidth, lipgloss.Right, rendered),
-		))
-	}
-	return strings.Join(rows, "\n")
-}
-
-// titleCaser applies Turkish title casing (i → İ, ı → I).
-var titleCaser = cases.Title(language.Turkish)
-
-func ledText(s string) string {
-	r := []rune(titleCaser.String(s))
-	if len(r) > ledDestWidth {
-		return string(r[:ledDestWidth])
-	}
-	return string(r)
-}
-
-func remainingTime(clock string) (string, bool) {
-	hour, min, ok := parseClock(clock)
-	if !ok {
-		return clock, false
-	}
-
-	now := time.Now()
-	nowTotal := now.Hour()*60 + now.Minute()
-	targetTotal := hour*60 + min
-	// Trips after midnight belong to the previous evening's service.
-	if targetTotal < nowTotal && now.Hour() > 20 && hour < 4 {
-		targetTotal += 24 * 60
-	}
-	if diff := targetTotal - nowTotal; diff > 0 {
-		return fmt.Sprintf("%d Dk", diff), false
-	}
-	return "Peronda", true
-}
-
-func parseClock(clock string) (hour, min int, ok bool) {
-	parts := strings.Split(clock, ":")
-	if len(parts) != 2 {
-		return 0, 0, false
-	}
-	h, errH := strconv.Atoi(strings.TrimSpace(parts[0]))
-	m, errM := strconv.Atoi(strings.TrimSpace(parts[1]))
-	if errH != nil || errM != nil || h < 0 || h > 23 || m < 0 || m > 59 {
-		return 0, 0, false
-	}
-	return h, m, true
 }

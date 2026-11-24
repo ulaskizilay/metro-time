@@ -17,13 +17,16 @@ import (
 )
 
 const (
-	timetablePageURL = "https://www.metro.istanbul/SeferDurumlari/SeferDetaylari"
-	ajaxTripsURL     = "https://www.metro.istanbul/SeferDurumlari/AJAXSeferGetir"
+	defaultBaseURL   = "https://www.metro.istanbul"
+	timetablePath    = "/SeferDurumlari/SeferDetaylari"
+	ajaxTripsPath    = "/SeferDurumlari/AJAXSeferGetir"
+	maxResponseBytes = 4 << 20 // 4 MiB guard against unexpected huge payloads.
 
 	// modeNow is the "right now" query mode; enough for every stop.
 	modeNow = "1"
 
-	userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	userAgent      = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	acceptLanguage = "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
 )
 
 var (
@@ -53,24 +56,44 @@ type tripsResponse struct {
 
 // Client talks to Metro Istanbul. Do not use the zero value; build with NewClient.
 type Client struct {
-	http *http.Client
+	http    *http.Client
+	baseURL string
 }
 
 // NewClient builds a client with a 20 second timeout.
 func NewClient() *Client {
-	return &Client{http: &http.Client{Timeout: 20 * time.Second}}
+	return NewClientWithBaseURL(nil, defaultBaseURL)
+}
+
+// NewClientWithBaseURL builds a client using the given HTTP client and base URL.
+// If httpClient is nil, a default client with a 20 second timeout is used.
+func NewClientWithBaseURL(httpClient *http.Client, baseURL string) *Client {
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 20 * time.Second}
+	}
+	if baseURL == "" {
+		baseURL = defaultBaseURL
+	}
+	return &Client{
+		http:    httpClient,
+		baseURL: strings.TrimRight(baseURL, "/"),
+	}
+}
+
+func setCommonHeaders(req *http.Request) {
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept-Language", acceptLanguage)
 }
 
 // fetchSession opens the timetable page and returns the session cookie
 // and the code token. The code changes on every page load,
 // so it is deliberately never cached.
 func (c *Client) fetchSession(ctx context.Context) (code, cookie string, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, timetablePageURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+timetablePath, nil)
 	if err != nil {
 		return "", "", err
 	}
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept-Language", "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7")
+	setCommonHeaders(req)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -78,13 +101,17 @@ func (c *Client) fetchSession(ctx context.Context) (code, cookie string, err err
 	}
 	defer resp.Body.Close()
 
-	parts := make([]string, 0, 2)
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+
+	parts := make([]string, 0, len(resp.Cookies()))
 	for _, ck := range resp.Cookies() {
 		parts = append(parts, ck.Name+"="+ck.Value)
 	}
 	cookie = strings.Join(parts, "; ")
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return "", "", err
 	}
@@ -139,15 +166,14 @@ func (c *Client) GetTrips(ctx context.Context, routeID, stationID string) ([]Tri
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ajaxTripsURL, &form)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+ajaxTripsPath, &form)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", userAgent)
+	setCommonHeaders(req)
 	req.Header.Set("Accept", "*/*")
-	req.Header.Set("Accept-Language", "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7")
-	req.Header.Set("Origin", "https://www.metro.istanbul")
-	req.Header.Set("Referer", timetablePageURL)
+	req.Header.Set("Origin", c.baseURL)
+	req.Header.Set("Referer", c.baseURL+timetablePath)
 	req.Header.Set("Cookie", cookie)
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -158,8 +184,12 @@ func (c *Client) GetTrips(ctx context.Context, routeID, stationID string) ([]Tri
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("trips request returned status %d", resp.StatusCode)
+	}
+
 	var answer tripsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&answer); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&answer); err != nil {
 		return nil, fmt.Errorf("unreadable response: %w", err)
 	}
 	if answer.Status == "-1" {
